@@ -73,8 +73,8 @@ export const OutputGrid: React.FC = () => {
           va = a.confidence_score;
           vb = b.confidence_score;
         } else {
-          va = String((a as unknown as Record<string, unknown>)[sort.field] ?? '');
-          vb = String((b as unknown as Record<string, unknown>)[sort.field] ?? '');
+          va = String((a as any)[sort.field] ?? '');
+          vb = String((b as any)[sort.field] ?? '');
         }
 
         if (typeof va === 'number' && typeof vb === 'number') {
@@ -234,7 +234,7 @@ export const OutputGrid: React.FC = () => {
                   {['issue_summary', 'detailed_issue', 'rca', 'reason_of_issue'].map(
                     (field) => {
                       const value = String(
-                        (ticket as unknown as Record<string, unknown>)[field] ?? ''
+                        (ticket as any)[field] ?? ''
                       );
                       const isEditing =
                         editingCell?.ticketId === ticket.ticket_id &&
