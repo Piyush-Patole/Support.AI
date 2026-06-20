@@ -8,7 +8,8 @@ import { detectAndCluster } from './duplicateDetector';
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 5;          // keep well within free-tier RPM
+const BATCH_DELAY_MS = 5000;   // 5s between batches
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -122,9 +123,15 @@ async function analyzeChunk(
     return tickets.map((t) => errorTicket(t, 'Network error: ' + (err as Error).message));
   }
 
-  if (response.status === 429 && attempt < 3) {
-    await sleep(2000 * Math.pow(2, attempt));
-    return analyzeChunk(tickets, categoryConfig, attempt + 1);
+  if (response.status === 429) {
+    if (attempt < 3) {
+      // Aggressive backoff for rate-limit: 15s, 30s, 60s
+      const wait = 15000 * Math.pow(2, attempt);
+      console.warn(`[Gemini] 429 rate-limited. Retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)…`);
+      await sleep(wait);
+      return analyzeChunk(tickets, categoryConfig, attempt + 1);
+    }
+    return tickets.map((t) => errorTicket(t, 'Rate limit exceeded after 3 retries. Please wait a moment and try again.'));
   }
 
   if (!response.ok) {
@@ -228,7 +235,7 @@ export async function analyzeBatch(
     processed += chunk.length;
     onProgress?.(processed, total);
     // Small delay between batches to avoid rate limiting
-    if (i + BATCH_SIZE < tickets.length) await sleep(500);
+    if (i + BATCH_SIZE < tickets.length) await sleep(BATCH_DELAY_MS);
   }
 
   // Cluster
