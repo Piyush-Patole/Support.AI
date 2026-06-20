@@ -1,6 +1,6 @@
 /**
  * Browser-native Gemini API client.
- * Calls Google Gemini 2.0 Flash directly from the browser — no backend needed.
+ * Uses a global rate limiter to stay under the 15 RPM free-tier limit.
  */
 import { RawTicket, AnalyzedTicket, SeverityLevel, DashboardStats } from '../types/ticket';
 import { CategoryConfig } from '../types/category';
@@ -8,10 +8,25 @@ import { detectAndCluster } from './duplicateDetector';
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-const BATCH_SIZE = 5;          // keep well within free-tier RPM
-const BATCH_DELAY_MS = 5000;   // 5s between batches
 
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+// Send 3 tickets per request — keeps prompts short and well under TPM limits
+const BATCH_SIZE = 3;
+
+// Enforce at most 1 request every 6 seconds globally → ~10 RPM (free tier: 15 RPM)
+const MIN_REQUEST_INTERVAL_MS = 6000;
+let lastRequestTime = 0;
+
+function sleep(ms: number) { return new Promise<void>((r) => setTimeout(r, ms)); }
+
+/** Waits until at least MIN_REQUEST_INTERVAL_MS have passed since the last request. */
+async function waitForRateLimit() {
+  const now = Date.now();
+  const elapsed = now - lastRequestTime;
+  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+    await sleep(MIN_REQUEST_INTERVAL_MS - elapsed);
+  }
+  lastRequestTime = Date.now();
+}
 
 function buildPrompt(tickets: RawTicket[], categoryConfig: CategoryConfig): string {
   let categoryInstructions = '';
@@ -26,7 +41,7 @@ function buildPrompt(tickets: RawTicket[], categoryConfig: CategoryConfig): stri
   const ticketsJson = JSON.stringify(
     tickets.map((t) => ({
       ticket_id: t.ticket_id,
-      text: t.raw_text.slice(0, 3000),
+      text: t.raw_text.slice(0, 2000), // Trim to keep token count low
     })),
     null,
     2
@@ -99,6 +114,9 @@ async function analyzeChunk(
   categoryConfig: CategoryConfig,
   attempt = 0
 ): Promise<AnalyzedTicket[]> {
+  // Respect the global rate limit before every attempt
+  await waitForRateLimit();
+
   const prompt = buildPrompt(tickets, categoryConfig);
 
   let response: Response;
@@ -110,28 +128,29 @@ async function analyzeChunk(
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 4096,
           responseMimeType: 'application/json',
         },
       }),
     });
   } catch (err) {
-    if (attempt < 3) {
-      await sleep(1000 * Math.pow(2, attempt));
+    if (attempt < 2) {
+      console.warn(`[Gemini] Network error, retrying…`);
       return analyzeChunk(tickets, categoryConfig, attempt + 1);
     }
     return tickets.map((t) => errorTicket(t, 'Network error: ' + (err as Error).message));
   }
 
   if (response.status === 429) {
-    if (attempt < 3) {
-      // Aggressive backoff for rate-limit: 15s, 30s, 60s
-      const wait = 15000 * Math.pow(2, attempt);
-      console.warn(`[Gemini] 429 rate-limited. Retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)…`);
+    if (attempt < 2) {
+      // Wait a full minute before retrying — the rate limiter resets
+      const wait = 65000;
+      console.warn(`[Gemini] 429 rate-limited. Waiting ${wait / 1000}s before retry (attempt ${attempt + 1}/2)…`);
       await sleep(wait);
       return analyzeChunk(tickets, categoryConfig, attempt + 1);
     }
-    return tickets.map((t) => errorTicket(t, 'Rate limit exceeded after 3 retries. Please wait a moment and try again.'));
+    console.error('[Gemini] Rate limit persists after retry. Marking tickets as errored.');
+    return tickets.map((t) => errorTicket(t, 'Rate limit exceeded. Please wait 1 minute and try again.'));
   }
 
   if (!response.ok) {
@@ -227,15 +246,16 @@ export async function analyzeBatch(
   const total = tickets.length;
   let processed = 0;
 
-  // Process in batches of BATCH_SIZE
+  // Reset the rate limiter at the start of a fresh batch run
+  lastRequestTime = 0;
+
+  // Process sequentially in small batches — rate limiter handles pacing
   for (let i = 0; i < tickets.length; i += BATCH_SIZE) {
     const chunk = tickets.slice(i, i + BATCH_SIZE);
     const results = await analyzeChunk(chunk, categoryConfig);
     allAnalyzed.push(...results);
     processed += chunk.length;
     onProgress?.(processed, total);
-    // Small delay between batches to avoid rate limiting
-    if (i + BATCH_SIZE < tickets.length) await sleep(BATCH_DELAY_MS);
   }
 
   // Cluster
