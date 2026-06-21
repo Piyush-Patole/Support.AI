@@ -10,7 +10,7 @@ An AI-powered support ticket analysis tool that helps support teams instantly ex
 
 | Feature | Description |
 |---|---|
-| **AI Analysis** | Google Gemini 2.0 Flash analyzes each ticket for root cause, severity, and recommended actions |
+| **AI Analysis** | Groq (Llama 3.3 70B) analyzes each ticket for root cause, severity, and recommended actions |
 | **File Upload** | Drag & drop `.xlsx` and `.csv` ticket files — parsed directly in the browser |
 | **Paste Support** | Paste ticket tables (CSV/TSV) or raw email text directly |
 | **Duplicate Detection** | Browser-native TF-IDF cosine similarity clusters similar issues automatically |
@@ -50,13 +50,13 @@ Browser Only — No Backend Required
 │  ┌─────▼──────────────────────────────────────┐              │
 │  │              Browser Services               │              │
 │  │  fileParser.ts   →  xlsx library (browser)  │              │
-│  │  geminiClient.ts →  fetch() to Gemini API   │              │
+│  │  geminiClient.ts →  fetch() to Groq API     │              │
 │  │  duplicateDetector.ts → TF-IDF + Union-Find │              │
 │  └────────────────────────────────────────────┘              │
 └──────────────────────────────┬──────────────────────────────┘
                                │ HTTPS fetch
                                ▼
-              Google Gemini 2.0 Flash API
+              Groq API (Llama 3.3 70B)
 ```
 
 ---
@@ -71,7 +71,7 @@ Browser Only — No Backend Required
 | Animations | Framer Motion |
 | File Parsing | SheetJS (xlsx) — runs in browser |
 | Charts | Recharts |
-| AI | Google Gemini 2.0 Flash |
+| AI | Groq (llama-3.3-70b-versatile) |
 | Hosting | GitHub Pages |
 
 ---
@@ -117,7 +117,7 @@ Support.AI/
 │   ├── src/
 │   │   ├── services/
 │   │   │   ├── fileParser.ts   ← Browser XLSX/CSV parsing
-│   │   │   ├── geminiClient.ts ← Direct Gemini API calls
+│   │   │   ├── geminiClient.ts ← Direct Groq API calls
 │   │   │   └── duplicateDetector.ts ← TF-IDF clustering
 │   │   ├── components/
 │   │   │   ├── layout/         ← AppShell, Sidebar, Header
@@ -145,10 +145,10 @@ Support.AI/
 - **Paste Email tab**: Paste a raw email for single-ticket analysis
 
 ### Custom Categories (Optional)
-Define custom columns like `Plant`, `Region`, or `Module` with predefined values. Gemini will auto-detect and fill these for every ticket.
+Define custom columns like `Plant`, `Region`, or `Module` with predefined values. The AI will auto-detect and fill these for every ticket.
 
 ### Analyze
-Click **Analyze with AI** — Gemini processes tickets in batches of 20, then the browser clusters similar issues automatically.
+Click **Analyze with AI** — Groq processes tickets in batches of 5, then the browser clusters similar issues automatically.
 
 ### Results Grid
 - **Sort** any column by clicking the header
@@ -161,6 +161,6 @@ Click **Analyze with AI** — Gemini processes tickets in batches of 20, then th
 
 ## ⚠️ Notes
 
-- The Gemini API key is embedded for demo purposes. For production use, replace it with your own key in `src/services/geminiClient.ts`.
-- All ticket data stays in your browser — nothing is sent to any server except the Gemini API.
+- The Groq API key is embedded for demo purposes. For production use, replace it with your own key.
+- All ticket data stays in your browser — nothing is sent to any server except the Groq API.
 - For large batches (500+ tickets), analysis may take a few minutes due to API rate limits.
